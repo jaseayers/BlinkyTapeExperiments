@@ -5,7 +5,6 @@ import signal
 import serial
 import time
 import os
-from blinkytape import BlinkyTape
 
 from datetime import datetime
 
@@ -37,7 +36,7 @@ if options.colors:
 logging.info('ColorOrder: {}'.format(colorOrder))
 
 offColor = black 
-cursorColor = white   ### <<< Change this to change the color of the dot
+cursorColor = white ### <<< Change this to change the color of the dot
 paintBrushWidth = 5 ### <<< Change this to adjust the width of the color section
 
 paintColors = itertools.cycle(colorOrder) 
@@ -79,69 +78,52 @@ def getDist():
       mmdist = int(response[1:5])
       yield mmdist
 
-def processDistance(q, targetRange, delta):
+def process(targetRange, delta):
   logging.info("Starting sensor process:")
-  ### mmmm[ ] = used to determine median of multiple readings -- filter out noise
-  mmmm = [0, 0, 0] 
 
-  ### Open serial port for read/write
-  port.isOpen()
-
-  ### infinate loop measuring distance and putting them in the queue
-  distances = getDist()
-  for mmm in distances:
-    if mmm in targetRange:
-      q.put(mmm)
-
-    time.sleep(.01)
-  
-# Loop forever for constant measuring.  Will speak if closer than 6 ft (180 cm)
-def processDisplay(q): 
-  logging.info("Starting display process:")
   backColor = paintColors.next()
   paintColor = paintColors.next()
   rangelist = [backColor for x in range(bb.ledCount)]
   bb.send_list2(rangelist)
 
+  ### Open serial port for read/write
+  port.isOpen()
+
   last = None
-  ### infinate loop changing the colors on the display using values from the queue
-  while True:
-    if all((x==paintColor or x==cursorColor) for x in rangelist):
-      paintColor = paintColors.next()
- 
-    try:
-      ### get distance value from queue
-      mmm = q.get(True,.001)
-    except Exception as e:
-      continue
+  ### infinate loop measuring distance and putting them in the queue
+  distances = getDist()
+  for mmm in distances:
+    if mmm in targetRange:
+      if all((x==paintColor or x==cursorColor) for x in rangelist):
+        paintColor = paintColors.next()
+      ### determine index, is this estimation correct?
+      i = int(60*((mmm-300)/1000.0))
+      logging.info("Index: {}".format(i))
 
-    ### determine index, is this estimation correct?
-    i = int(60*((mmm-300)/1000.0))
-    logging.info("Index: {}".format(i))
+      ### replace color at index (estimated range)
+      if last != None :
+        rangelist[last] = paintColor
+      else:
+        pass
+      rangelist[i] = cursorColor
+      for ix in range(1,paintBrushWidth+1):
+        if i-ix >= 0:
+          rangelist[i-ix] = paintColor
+      for ix in range(1,paintBrushWidth+1):
+        if i+ix <= len(rangelist) - 1:
+          rangelist[i+ix] = paintColor
 
-    ### replace color at index (estimated range)
-    if last != None :
-      rangelist[last] = paintColor
-    else:
-      pass
-    rangelist[i] = cursorColor
-    for ix in range(1,paintBrushWidth+1):
-      if i-ix >= 0:
-        rangelist[i-ix] = paintColor
-    for ix in range(1,paintBrushWidth+1):
-      if i+ix <= len(rangelist) - 1:
-        rangelist[i+ix] = paintColor
-    ### send color map to display
-    bb.send_list2(rangelist)
-    last = i
-    time.sleep(.01)
+      ### send color map to display
+      bb.send_list2(rangelist)
+      last = i
 
+#    time.sleep(.01)
+  
 def sigHandler(signum, frame):
   logging.info("Proc: {}, Signal {} received, exiting...".format(current_process().name,signum))
-  if current_process().name == 'DisplayProcess':
-    rangelist = [offColor for x in range(bb.ledCount)]
-    bb.send_list2(rangelist)
-    bb.close()
+  rangelist = [offColor for x in range(bb.ledCount)]
+  bb.send_list2(rangelist)
+  bb.close()
   exit()
 
 if __name__ == "__main__":
@@ -155,8 +137,5 @@ if __name__ == "__main__":
   ### 1m = 1000mm
   targetRange = range(300,1300)
 
-  q = Queue()
-  p = Process(name='DisplayProcess',target=processDisplay, args=(q,))
-  p.start()
-  processDistance(q,targetRange,delta)
-  p.join()  ### i dont think i will actually reach this point but if i improve my code later, this will ensure the script does not end early
+  ### Start processing data and updating the display
+  process(targetRange,delta)
